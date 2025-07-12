@@ -30,11 +30,78 @@ suppressWarnings(suppressMessages({
   library(ggimage)
   # library(tonybaseball)
   #library(eeptools) 
+  library(tonybsbl)
+  library(zoo)
+  library(gt)
+  library(data.table)
 }))
 
-db <- dbConnect(SQLite(), "frontier_league.sqlite")
-dbListTables(db)
-teams <- dbGetQuery(db, 'select * from teams')
+db = dbConnect(SQLite(), 
+               "G:/.shortcut-targets-by-id/1gpEXlAsUgkGuM6l4rLGFyoTR2zHQs1SS/_SchaumburgBoomers/_Files/frontier_league.sqlite")
+
+teams = dbGetQuery(db, 'select * from teams')
+
+stevendata2 = dbGetQuery(db, 
+  "SELECT Batter, Season, Date, PitchClass, PlateLocSide, PlateLocHeight, whiff, swing, woba_value, ExitSpeed, 
+  Angle, is_pa, xwOBA, Balls, Strikes
+  FROM pitch_data"
+) %>%
+  mutate(count = paste(Balls, Strikes, sep = "-"))
+
+stevendata2$Date = as.Date(stevendata2$Date)
+
+stevendata = stevendata2 %>%
+  filter(is_pa == 1) %>%
+  arrange(desc(Batter), -desc(Date), desc(is_pa)) %>%
+  group_by(Batter, SEASON) %>%
+  summarise(Date = Date, Season = SEASON, pa = cumsum(is_pa), woba_value = cumsum(woba_value),
+            xwoba_value = cumsum(xwOBA), woba = woba_value/pa, xwoba = xwoba_value/pa,
+            woba2 = rollmean(woba, k = 25, align = "right", fill = NA),
+            xwoba2 = rollmean(xwoba, k = 25, align = "right", fill = NA))
+
+stevenreactable = list(
+  seasondata = aws_db_query(
+    "SELECT Batter, BatterId, BatterTeam, Season, G, PA, BA, OBP, SLG, OPS, wOBA, xwOBA
+    FROM stats_hitting_player_batted_ball"
+  ) %>%
+    mutate(BatterTeam = case_when(BatterTeam %in% c("BRO_ROX") ~ "Brockton Rox", BatterTeam %in% c("DOW_EAS") ~ "Down East Bird Dawgs",
+                                  BatterTeam %in% c("EMP_STA") ~ "Empire State Greys", BatterTeam %in% c("EVA_OTT") ~ "Evansville Otters",
+                                  BatterTeam %in% c("FLO_YAL") ~ "Florence Y'alls", BatterTeam %in% c("Florence Yalls") ~ "Florence Y'alls",
+                                  BatterTeam %in% c("GAT_GRI") ~ "Gateway Grizzlies", BatterTeam %in% c("JOL_SLA") ~ "Joliet Slammers",
+                                  BatterTeam %in% c("LAK_ERI") ~ "Lake Erie Crushers", BatterTeam %in% c("MIS_MUD") ~ "Mississippi Mud Monsters",
+                                  BatterTeam %in% c("NEW_ENG") ~ "New England Knockouts", BatterTeam %in% c("NEW_JER") ~ "New Jersey Jackals",
+                                  BatterTeam %in% c("NEW_YOR") ~ "New York Boulders", BatterTeam %in% c("OTT_TIT") ~ "Ottawa Titans",
+                                  BatterTeam %in% c("QUE_CAP") ~ "Quebec Capitales", BatterTeam %in% c("SCH_BOO") ~ "Schaumburg Boomers",
+                                  BatterTeam %in% c("SUS_COU") ~ "Sussex County Miners", 
+                                  BatterTeam %in% c("Southern Illinois Miners") ~ "Sussex County Miners",
+                                  BatterTeam %in% c("TRI_VAL") ~ "Tri-City ValleyCats", BatterTeam %in% c("TRO_AIG") ~ "Trois-Rivieres Aigles",
+                                  BatterTeam %in% c("WAS_WIL") ~ "Washington Wild Things", BatterTeam %in% c("WIN_CIT") ~ "Windy City ThunderBolts",
+                                  .default = BatterTeam),
+           Status = 0),
+  careerdata = aws_db_query(
+    "SELECT Batter, BatterId, BatterTeam, Season, G, PA, BA, OBP, SLG, OPS, wOBA, xwOBA
+    FROM stats_hitting_player_batted_ball_career"
+  ) %>% mutate(BatterTeam = case_when(BatterTeam %in% c("BRO_ROX") ~ "Brockton Rox", BatterTeam %in% c("DOW_EAS") ~ "Down East Bird Dawgs",
+                                      BatterTeam %in% c("EMP_STA") ~ "Empire State Greys", BatterTeam %in% c("EVA_OTT") ~ "Evansville Otters",
+                                      BatterTeam %in% c("FLO_YAL") ~ "Florence Y'alls", BatterTeam %in% c("Florence Yalls") ~ "Florence Y'alls",
+                                      BatterTeam %in% c("GAT_GRI") ~ "Gateway Grizzlies", BatterTeam %in% c("JOL_SLA") ~ "Joliet Slammers",
+                                      BatterTeam %in% c("LAK_ERI") ~ "Lake Erie Crushers", BatterTeam %in% c("MIS_MUD") ~ "Mississippi Mud Monsters",
+                                      BatterTeam %in% c("NEW_ENG") ~ "New England Knockouts", BatterTeam %in% c("NEW_JER") ~ "New Jersey Jackals",
+                                      BatterTeam %in% c("NEW_YOR") ~ "New York Boulders", BatterTeam %in% c("OTT_TIT") ~ "Ottawa Titans",
+                                      BatterTeam %in% c("QUE_CAP") ~ "Quebec Capitales", BatterTeam %in% c("SCH_BOO") ~ "Schaumburg Boomers",
+                                      BatterTeam %in% c("SUS_COU") ~ "Sussex County Miners", 
+                                      BatterTeam %in% c("Southern Illinois Miners") ~ "Sussex County Miners",
+                                      BatterTeam %in% c("TRI_VAL") ~ "Tri-City ValleyCats", BatterTeam %in% c("TRO_AIG") ~ "Trois-Rivieres Aigles",
+                                      BatterTeam %in% c("WAS_WIL") ~ "Washington Wild Things", BatterTeam %in% c("WIN_CIT") ~ "Windy City ThunderBolts",
+                                      .default = BatterTeam),
+               Status = 1)
+) %>% rbindlist() %>%
+  filter(Batter != "Team Totals") %>%
+  arrange(desc(BatterId), -desc(Status)) %>%
+  group_by(BatterId) %>%
+  mutate(Season_n = n() - 1, Yr = case_when(is.na(Season) ~ Season_n, .default = Season)) %>%
+  ungroup()
+
 # db <- dbConnect(RMySQL::MySQL(), dbname = "frontier_league", host = "frontier-league.czcooiea00wp.us-east-2.rds.amazonaws.com",
 #                 port = 3306, user = "admin", password = "boomers25")
 # pitch_type_colors
@@ -94,7 +161,7 @@ pitch_type_recode <- function(data){
 }
 
 
-pitch_data_lg_avg <- dpitch_data_lg_avg <- dbGetQuery(db, "
+pitch_data_lg_avg <- dbGetQuery(db, "
   SELECT *
   FROM metrics_pitch_league_averages")
 
@@ -798,9 +865,7 @@ from stats_hitting_league h
 left join teams t on t.Team = h.Team
 left join stats_hitting_league_batted_ball x 
 on
-    x.SEASON = h.SEASON
---where h.SEASON = 2024
-order by h.SEASON desc;")%>%
+    x.SEASON = h.SEASON where h.SEASON = 2024 order by h.SEASON desc;")%>%
   mutate(across(c(AVG, xBA, OBP, SLG, xSLG, wOBA, xwOBA), ~ round(.,3)),
          across(c(BB_pct, SO_pct, Chase_pct, Whiff_pct), ~ round(.,1)),
          Team = Tm  )%>%
@@ -1132,13 +1197,72 @@ ui <- dashboardPage(
               )
       ),
       tabItem(tabName = "hit_tab",
-              h1(strong('Under Construction')))
+              
+              fluidRow(
+                column(6,
+                       sliderInput("season_input", "Season:",
+                                   min = min(stevendata$SEASON),
+                                   max = max(stevendata$SEASON),
+                                   value = min(stevendata$SEASON),
+                                   sep = "", step = 1)
+                ),
+                column(6,
+                       selectInput("batter_input", "Select Batter:",
+                                   choices = sort(unique(stevendata$Batter)),
+                                   selected = unique(stevendata$Batter)[1])
+                )
+              ),
+          
+              
+              fluidRow(
+                column(12,
+                       wellPanel(style = "border: 1px solid #73b3be;",
+                                 h5(strong("Frontier League Hitting Stats"), align = 'center'),
+                                 reactableOutput("summary_table2")
+                       )
+                )
+              ),
+              
+              fluidRow(
+                column(12,
+                       wellPanel(style = "border: 1px solid #73b3be;",
+                                 h5(strong("Rolling xwOBA Plot"), align = 'center'),
+                                 plotOutput("xwoba_plot", height = "400px")
+                       )
+                )
+              ),
+              
+              fluidRow(
+                column(12,
+                       wellPanel(style = "border: 1px solid #73b3be;",
+                                 h5(strong("Swing Density (Ahead in Count)"), align = 'center'),
+                                 plotOutput("aheadswing", height = "400px")
+                       )
+                )
+              ),
+              
+              fluidRow(
+                column(12,
+                       wellPanel(style = "border: 1px solid #73b3be;",
+                                 h5(strong("Swing Density (Even in Count)"), align = 'center'),
+                                 plotOutput("evenswing", height = "400px")
+                       )
+                )
+              ),
+              
+              fluidRow(
+                column(12,
+                       wellPanel(style = "border: 1px solid #73b3be;",
+                                 h5(strong("Swing Density (Behind in Count)"), align = 'center'),
+                                 plotOutput("behindswing", height = "400px")
+                       )
+                )
+              )
       
       
       
     )
-    
-    
+    )
   )
 )
 
@@ -1245,10 +1369,8 @@ server <- function(input, output, session) {
   h_team_stats <- dbGetQuery(db, "select h.SEASON Yr, t.logo_small Tm, h.wOBA, x.xwOBA, h.AVG, x.xBA, h.OBP, h.SLG, x.xSLG, h.BB_pct, h.SO_pct , x.Whiff_pct, x.Chase_pct
 from stats_hitting_team h
 left join teams t on t.Team = h.Team
-left join stats_hitting_team_batted_ball x 
-    on t.trackman_code = x.BatterTeam 
-    and x.SEASON = h.SEASON
---where h.SEASON = 2025
+left join stats_hitting_team_batted_ball x on t.trackman_code = x.BatterTeam and x.SEASON = h.SEASON
+where h.SEASON = 2025
 order by h.wOBA desc") %>%
     mutate(across(c(3:9),~round(.,3)),
            across(10:13, ~round(.,1))) %>%
@@ -3182,6 +3304,402 @@ order by h.wOBA desc") %>%
     pitcher_plot(pitcher_name = paste(reactive_data$pitchers), 
                  plot_type = 'arm_angle', pitch_data_df = pitcher_data())
     
+  })
+  
+  filtered_data <- reactive({
+    stevendata %>%
+      filter(
+        Season == input$season_input,
+        Batter == input$batter_input
+      )
+  })
+  
+  filtered_data3 <- reactive({
+    stevendata2 %>%
+      filter(
+        SEASON == input$season_input,
+        Batter == input$batter_input
+      )
+  })
+  
+  output$xwoba_plot <- renderPlot({
+    data <- filtered_data()
+    
+    if (nrow(data) == 0) return(NULL)
+    
+    latest_woba = data %>%
+      filter(Season == 2025, pa == max(pa, na.rm = T)) %>%
+      pull(woba)
+    
+    Batter = data %>%
+      pull(Batter)
+    
+    Season = data %>%
+      pull(Season)
+    
+    wobatitle = paste0(Season, " Rolling wOBA & xwOBA - 25 PA")
+    
+    ggplot(data %>% filter(Season == 2025), aes(x = pa)) +
+      geom_path(aes(y = woba, group = 1, color = "wOBA"), size = 2) +
+      geom_path(aes(y = xwoba, group = 1, color = "xwOBA"), size = 2) +
+      scale_y_continuous(limits = c(0.25, 0.55)) +
+      geom_hline(yintercept = latest_woba, linetype = "dashed", size = 1.5) +
+      labs(title = wobatitle,
+           x = "Last 25 PA",
+           y = "wOBA & xwOBA") +
+      theme_bw() +
+      theme(legend.position = "bottom", legend.title = element_blank(), plot.title = element_text(hjust = 0.5))
+  })
+  
+  steventableFilter <- reactive({
+    stevenreactable %>%
+      filter(Batter == input$batter_input) %>%
+      select(Yr, G, PA, BA, OBP, SLG, OPS, wOBA, xwOBA) %>%
+      mutate(BA = round(BA, 3), OBP = round(OBP, 3), SLG = round(SLG, 3), OPS = round(OPS, 3),
+             wOBA = round(wOBA, 3), xwOBA = round(xwOBA, 3))
+  })
+  
+  output$summary_table2 <- renderReactable({
+    
+    reactable(steventableFilter(),
+              rowStyle = function(index) {
+                if (index==nrow(steventableFilter())) {
+                  list(background = "lightgrey")
+                }
+              },
+              theme = reactableTheme(
+                style = list(fontFamily = "Calibri, sans-serif"),
+                headerStyle = list(background = "hsl(219, 89%, 14%);",  color = "hsl(0, 0%, 100%);")
+              ),
+              defaultColDef = colDef(align = 'center',
+                                     minWidth = 30  # Adjust the minimum width as needed
+              ),
+              columns = list(
+                wOBA = colDef(minWidth = 35),
+                xwOBA = colDef(minWidth = 35)
+              )
+    )
+  })
+  
+  output$aheadswing <- renderPlot({
+    aheaddata <- filtered_data3() %>%
+      filter(count %in% c("1-0", "2-0", "3-0", "2-1", "3-1", "3-2"))
+    
+    Batter = aheaddata %>%
+      pull(Batter)
+    
+    Season = aheaddata %>%
+      pull(SEASON)
+    
+    swingmaptitle = paste0(Season, " Ahead in Count Swing Profile")
+    
+    plate_width <- 17 + 2 * (9/pi)
+    
+    home_plate = data.frame(x = c(-0.708, -0.708, -0.708, 0, 0.708),
+                            y = c(0.5, 0.3, 0.3, 0.15, 0.5),
+                            xend = c(0.708, -0.708, 0, 0.708, 0.708),
+                            yend = c(0.5, 0.5, 0.15, 0.3, 0.3))
+    
+    strike_zone = data.frame(x = c(-0.3156886, 0.3156886, -plate_width/24, -plate_width/24),
+                             xend = c(-0.3156886, 0.3156886, plate_width/24, plate_width/24),
+                             y = c(1.4, 1.4, 2.2, 2.9),
+                             yend = c(3.6, 3.6, 2.2, 2.9))
+    
+    fastballswing = aheaddata %>%
+      filter(swing == 1, PitchClass == "Fastballs") %>%
+      ggplot(aes(x = PlateLocSide, y = PlateLocHeight)) +
+      stat_density_2d(geom = "polygon", aes(alpha = ..level.., fill = as.numeric(after_stat(..level..))),
+                      linewidth = .5, bins = 9, show.legend = F, alpha = 0.8) +
+      geom_rect(xmin = -(plate_width/2)/12,
+                xmax = (plate_width/2)/12,
+                ymin = 1.5,
+                ymax = 3.5, color = "black", alpha = 0, linewidth = 1.2) +
+      geom_segment(data = home_plate,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1) +
+      geom_segment(data = strike_zone,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1, linetype = "dashed", alpha = 0.75) +
+      scale_fill_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_color_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_x_continuous(limits = c(-1.5, 1.5)) +
+      scale_y_continuous(limits = c(0, 4.25)) +
+      annotate(geom = "text", label = "Fastballs", x = 0, y = 4, fontface = "bold", size = 5, color = "#D22D49") +
+      theme_classic() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, vjust = -0.5), axis.ticks = element_blank(),
+            strip.text = element_text(face = "bold"), axis.line = element_blank(), axis.title = element_blank(),
+            axis.text = element_blank())
+    
+    breakingballswing = aheaddata %>%
+      filter(swing == 1, PitchClass == "BreakingBalls") %>%
+      ggplot(aes(x = PlateLocSide, y = PlateLocHeight)) +
+      stat_density_2d(geom = "polygon", aes(alpha = ..level.., fill = as.numeric(after_stat(..level..))),
+                      linewidth = .5, bins = 9, show.legend = F, alpha = 0.8) +
+      geom_rect(xmin = -(plate_width/2)/12,
+                xmax = (plate_width/2)/12,
+                ymin = 1.5,
+                ymax = 3.5, color = "black", alpha = 0, linewidth = 1.2) +
+      geom_segment(data = home_plate,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1) +
+      geom_segment(data = strike_zone,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1, linetype = "dashed", alpha = 0.8) +
+      scale_fill_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_color_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_x_continuous(limits = c(-1.5, 1.5)) +
+      scale_y_continuous(limits = c(0, 4.25)) +
+      annotate(geom = "text", label = "Breaking Pitches", x = 0, y = 4, fontface = "bold", size = 5, color = "#0068FF") +
+      theme_classic() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, vjust = -1), axis.ticks = element_blank(),
+            strip.text = element_text(face = "bold"), axis.line = element_blank(), axis.title = element_blank(),
+            axis.text = element_blank())
+    
+    offspeedswing = aheaddata %>%
+      filter(swing == 1, PitchClass == "Offspeed") %>%
+      ggplot(aes(x = PlateLocSide, y = PlateLocHeight)) +
+      stat_density_2d(geom = "polygon", aes(alpha = ..level.., fill = as.numeric(after_stat(..level..))),
+                      linewidth = .5, bins = 9, show.legend = F, alpha = 0.8) +
+      geom_rect(xmin = -(plate_width/2)/12,
+                xmax = (plate_width/2)/12,
+                ymin = 1.5,
+                ymax = 3.5, color = "black", alpha = 0, linewidth = 1.2) +
+      geom_segment(data = home_plate,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1) +
+      geom_segment(data = strike_zone,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1, linetype = "dashed", alpha = 0.9) +
+      scale_fill_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_color_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_x_continuous(limits = c(-1.5, 1.5)) +
+      scale_y_continuous(limits = c(0, 4.25)) +
+      annotate(geom = "text", label = "Offspeed Pitches", x = 0, y = 4, fontface = "bold", size = 5, color = "#60DB33") +
+      theme_classic() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, vjust = -0.75), axis.ticks = element_blank(),
+            strip.text = element_text(face = "bold"), axis.line = element_blank(), axis.title = element_blank(),
+            axis.text = element_blank())
+    
+    swingplot = ggarrange(fastballswing, breakingballswing, offspeedswing, ncol = 3)
+    
+    annotate_figure(swingplot,
+                    left = text_grob("Horizontal Pitch Location (ft.)", rot = 90),
+                    bottom = text_grob("Vertical Pitch Location (ft.)"),
+                    top = text_grob(swingmaptitle, size = 20, face = "bold"))
+  })
+  
+  output$evenswing <- renderPlot({
+    evendata <- filtered_data3() %>%
+      filter(count %in% c("0-0", "1-1", "2-2"))
+    
+    Batter = evendata %>%
+      pull(Batter)
+    
+    Season = evendata %>%
+      pull(SEASON)
+    
+    swingmaptitle = paste0(Season, " Even in Count Swing Profile")
+    
+    plate_width <- 17 + 2 * (9/pi)
+    
+    home_plate = data.frame(x = c(-0.708, -0.708, -0.708, 0, 0.708),
+                            y = c(0.5, 0.3, 0.3, 0.15, 0.5),
+                            xend = c(0.708, -0.708, 0, 0.708, 0.708),
+                            yend = c(0.5, 0.5, 0.15, 0.3, 0.3))
+    
+    strike_zone = data.frame(x = c(-0.3156886, 0.3156886, -plate_width/24, -plate_width/24),
+                             xend = c(-0.3156886, 0.3156886, plate_width/24, plate_width/24),
+                             y = c(1.4, 1.4, 2.2, 2.9),
+                             yend = c(3.6, 3.6, 2.2, 2.9))
+    
+    fastballswing = evendata %>%
+      filter(swing == 1, PitchClass == "Fastballs") %>%
+      ggplot(aes(x = PlateLocSide, y = PlateLocHeight)) +
+      stat_density_2d(geom = "polygon", aes(alpha = ..level.., fill = as.numeric(after_stat(..level..))),
+                      linewidth = .5, bins = 9, show.legend = F, alpha = 0.8) +
+      geom_rect(xmin = -(plate_width/2)/12,
+                xmax = (plate_width/2)/12,
+                ymin = 1.5,
+                ymax = 3.5, color = "black", alpha = 0, linewidth = 1.2) +
+      geom_segment(data = home_plate,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1) +
+      geom_segment(data = strike_zone,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1, linetype = "dashed", alpha = 0.75) +
+      scale_fill_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_color_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_x_continuous(limits = c(-1.5, 1.5)) +
+      scale_y_continuous(limits = c(0, 4.25)) +
+      annotate(geom = "text", label = "Fastballs", x = 0, y = 4, fontface = "bold", size = 5, color = "#D22D49") +
+      theme_classic() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, vjust = -0.5), axis.ticks = element_blank(),
+            strip.text = element_text(face = "bold"), axis.line = element_blank(), axis.title = element_blank(),
+            axis.text = element_blank())
+    
+    breakingballswing = evendata %>%
+      filter(swing == 1, PitchClass == "BreakingBalls") %>%
+      ggplot(aes(x = PlateLocSide, y = PlateLocHeight)) +
+      stat_density_2d(geom = "polygon", aes(alpha = ..level.., fill = as.numeric(after_stat(..level..))),
+                      linewidth = .5, bins = 9, show.legend = F, alpha = 0.8) +
+      geom_rect(xmin = -(plate_width/2)/12,
+                xmax = (plate_width/2)/12,
+                ymin = 1.5,
+                ymax = 3.5, color = "black", alpha = 0, linewidth = 1.2) +
+      geom_segment(data = home_plate,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1) +
+      geom_segment(data = strike_zone,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1, linetype = "dashed", alpha = 0.8) +
+      scale_fill_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_color_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_x_continuous(limits = c(-1.5, 1.5)) +
+      scale_y_continuous(limits = c(0, 4.25)) +
+      annotate(geom = "text", label = "Breaking Pitches", x = 0, y = 4, fontface = "bold", size = 5, color = "#0068FF") +
+      theme_classic() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, vjust = -1), axis.ticks = element_blank(),
+            strip.text = element_text(face = "bold"), axis.line = element_blank(), axis.title = element_blank(),
+            axis.text = element_blank())
+    
+    offspeedswing = evendata %>%
+      filter(swing == 1, PitchClass == "Offspeed") %>%
+      ggplot(aes(x = PlateLocSide, y = PlateLocHeight)) +
+      stat_density_2d(geom = "polygon", aes(alpha = ..level.., fill = as.numeric(after_stat(..level..))),
+                      linewidth = .5, bins = 9, show.legend = F, alpha = 0.8) +
+      geom_rect(xmin = -(plate_width/2)/12,
+                xmax = (plate_width/2)/12,
+                ymin = 1.5,
+                ymax = 3.5, color = "black", alpha = 0, linewidth = 1.2) +
+      geom_segment(data = home_plate,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1) +
+      geom_segment(data = strike_zone,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1, linetype = "dashed", alpha = 0.9) +
+      scale_fill_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_color_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_x_continuous(limits = c(-1.5, 1.5)) +
+      scale_y_continuous(limits = c(0, 4.25)) +
+      annotate(geom = "text", label = "Offspeed Pitches", x = 0, y = 4, fontface = "bold", size = 5, color = "#60DB33") +
+      theme_classic() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, vjust = -0.75), axis.ticks = element_blank(),
+            strip.text = element_text(face = "bold"), axis.line = element_blank(), axis.title = element_blank(),
+            axis.text = element_blank())
+    
+    swingplot = ggarrange(fastballswing, breakingballswing, offspeedswing, ncol = 3)
+    
+    annotate_figure(swingplot,
+                    left = text_grob("Horizontal Pitch Location (ft.)", rot = 90),
+                    bottom = text_grob("Vertical Pitch Location (ft.)"),
+                    top = text_grob(swingmaptitle, size = 20, face = "bold"))
+  })
+  
+  output$behindswing <- renderPlot({
+    behinddata <- filtered_data3() %>%
+      filter(count %in% c("0-1", "0-2", "1-2"))
+    
+    Batter = behinddata %>%
+      pull(Batter)
+    
+    Season = behinddata %>%
+      pull(SEASON)
+    
+    swingmaptitle = paste0(Season, " Behind in Count Swing Profile")
+    
+    plate_width <- 17 + 2 * (9/pi)
+    
+    home_plate = data.frame(x = c(-0.708, -0.708, -0.708, 0, 0.708),
+                            y = c(0.5, 0.3, 0.3, 0.15, 0.5),
+                            xend = c(0.708, -0.708, 0, 0.708, 0.708),
+                            yend = c(0.5, 0.5, 0.15, 0.3, 0.3))
+    
+    strike_zone = data.frame(x = c(-0.3156886, 0.3156886, -plate_width/24, -plate_width/24),
+                             xend = c(-0.3156886, 0.3156886, plate_width/24, plate_width/24),
+                             y = c(1.4, 1.4, 2.2, 2.9),
+                             yend = c(3.6, 3.6, 2.2, 2.9))
+    
+    fastballswing = behinddata %>%
+      filter(swing == 1, PitchClass == "Fastballs") %>%
+      ggplot(aes(x = PlateLocSide, y = PlateLocHeight)) +
+      stat_density_2d(geom = "polygon", aes(alpha = ..level.., fill = as.numeric(after_stat(..level..))),
+                      linewidth = .5, bins = 9, show.legend = F, alpha = 0.8) +
+      geom_rect(xmin = -(plate_width/2)/12,
+                xmax = (plate_width/2)/12,
+                ymin = 1.5,
+                ymax = 3.5, color = "black", alpha = 0, linewidth = 1.2) +
+      geom_segment(data = home_plate,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1) +
+      geom_segment(data = strike_zone,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1, linetype = "dashed", alpha = 0.75) +
+      scale_fill_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_color_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_x_continuous(limits = c(-1.5, 1.5)) +
+      scale_y_continuous(limits = c(0, 4.25)) +
+      annotate(geom = "text", label = "Fastballs", x = 0, y = 4, fontface = "bold", size = 5, color = "#D22D49") +
+      theme_classic() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, vjust = -0.5), axis.ticks = element_blank(),
+            strip.text = element_text(face = "bold"), axis.line = element_blank(), axis.title = element_blank(),
+            axis.text = element_blank())
+    
+    breakingballswing = behinddata %>%
+      filter(swing == 1, PitchClass == "BreakingBalls") %>%
+      ggplot(aes(x = PlateLocSide, y = PlateLocHeight)) +
+      stat_density_2d(geom = "polygon", aes(alpha = ..level.., fill = as.numeric(after_stat(..level..))),
+                      linewidth = .5, bins = 9, show.legend = F, alpha = 0.8) +
+      geom_rect(xmin = -(plate_width/2)/12,
+                xmax = (plate_width/2)/12,
+                ymin = 1.5,
+                ymax = 3.5, color = "black", alpha = 0, linewidth = 1.2) +
+      geom_segment(data = home_plate,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1) +
+      geom_segment(data = strike_zone,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1, linetype = "dashed", alpha = 0.8) +
+      scale_fill_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_color_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_x_continuous(limits = c(-1.5, 1.5)) +
+      scale_y_continuous(limits = c(0, 4.25)) +
+      annotate(geom = "text", label = "Breaking Pitches", x = 0, y = 4, fontface = "bold", size = 5, color = "#0068FF") +
+      theme_classic() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, vjust = -1), axis.ticks = element_blank(),
+            strip.text = element_text(face = "bold"), axis.line = element_blank(), axis.title = element_blank(),
+            axis.text = element_blank())
+    
+    offspeedswing = behinddata %>%
+      filter(swing == 1, PitchClass == "Offspeed") %>%
+      ggplot(aes(x = PlateLocSide, y = PlateLocHeight)) +
+      stat_density_2d(geom = "polygon", aes(alpha = ..level.., fill = as.numeric(after_stat(..level..))),
+                      linewidth = .5, bins = 9, show.legend = F, alpha = 0.8) +
+      geom_rect(xmin = -(plate_width/2)/12,
+                xmax = (plate_width/2)/12,
+                ymin = 1.5,
+                ymax = 3.5, color = "black", alpha = 0, linewidth = 1.2) +
+      geom_segment(data = home_plate,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1) +
+      geom_segment(data = strike_zone,
+                   aes(x = x, y = y, xend = xend, yend = yend),
+                   color = "black", size = 1, linetype = "dashed", alpha = 0.9) +
+      scale_fill_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_color_gradientn(colors = c('dodgerblue4', 'skyblue1', 'white', 'red', 'firebrick2'), na.value = NA) +
+      scale_x_continuous(limits = c(-1.5, 1.5)) +
+      scale_y_continuous(limits = c(0, 4.25)) +
+      annotate(geom = "text", label = "Offspeed Pitches", x = 0, y = 4, fontface = "bold", size = 5, color = "#60DB33") +
+      theme_classic() +
+      theme(plot.title = element_text(face = "bold", hjust = 0.5, vjust = -0.75), axis.ticks = element_blank(),
+            strip.text = element_text(face = "bold"), axis.line = element_blank(), axis.title = element_blank(),
+            axis.text = element_blank())
+    
+    swingplot = ggarrange(fastballswing, breakingballswing, offspeedswing, ncol = 3)
+    
+    annotate_figure(swingplot,
+                    left = text_grob("Horizontal Pitch Location (ft.)", rot = 90),
+                    bottom = text_grob("Vertical Pitch Location (ft.)"),
+                    top = text_grob(swingmaptitle, size = 20, face = "bold"))
   })
   
   
